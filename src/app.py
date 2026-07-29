@@ -2,9 +2,9 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
+import pydeck as pdk
 from PIL import Image, ExifTags
 from collections import Counter
-from pathlib import Path
 from ultralytics import YOLO
 
 # 1. PAGE CONFIGURATION
@@ -14,21 +14,21 @@ st.markdown("""
     <style>
     .main { background-color: #0f172a; color: #f8fafc; }
     .stMetric { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
+    .hazard-box { background-color: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 15px; border-radius: 4px; margin-bottom: 20px;}
+    .safe-box { background-color: rgba(34, 197, 94, 0.1); border-left: 4px solid #22c55e; padding: 15px; border-radius: 4px; margin-bottom: 20px;}
     </style>
 """, unsafe_allow_html=True)
 
 # 2. LOAD THE AI BRAIN
 @st.cache_resource
 def load_model():
-    model_path = Path(__file__).resolve().parents[1] / "models" / "best.pt"
     try:
-        model = YOLO(str(model_path))
-        return model, None
+        model = YOLO('best.pt')
+        return model, True
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        return None, False
 
-model, model_error = load_model()
-model_loaded = model is not None
+model, model_loaded = load_model()
 
 # 3. DASHBOARD HEADER
 st.title("🛣️ AURA: Smart City Infrastructure AI")
@@ -82,6 +82,8 @@ with col2:
     if uploaded_file is not None and model_loaded:
         # Load image via PIL to allow EXIF extraction before converting to OpenCV format
         pil_image = Image.open(uploaded_file)
+        
+        # Resize image slightly if it's a massive 4k smartphone photo to speed up inference
         img_array = np.array(pil_image)
         
         with st.spinner("Neural Network processing frame..."):
@@ -100,21 +102,19 @@ with col2:
             num_hazards = len(boxes)
             
             if num_hazards > 0:
-                st.error(f"🚨 Scan Complete: Detected {num_hazards} structural hazard(s).")
+                st.markdown(f'<div class="hazard-box"><strong>🚨 Scan Complete:</strong> Detected {num_hazards} structural hazard(s). Dispatching maintenance required.</div>', unsafe_allow_html=True)
                 
                 # --- THE NEW AI DESCRIPTION FEATURE ---
                 class_dict = {0: "Longitudinal Crack", 1: "Transverse Crack", 2: "Alligator Crack", 3: "Pothole"}
-                # Convert the raw tensor tensor classes to integer IDs
+                # Convert the raw tensor classes to integer IDs
                 detected_classes = [int(c) for c in boxes.cls]
                 # Count how many of each hazard exists
                 counts = Counter(detected_classes)
                 
-                # Build the dynamic sentence
-                desc_text = "**AI Analysis Report:** The neural network analyzed the pavement geometry and identified "
-                desc_parts = [f"{count} **{class_dict.get(cls_id, 'Unknown')}**(s)" for cls_id, count in counts.items()]
-                desc_text += ", and ".join(desc_parts) + "."
-                
-                st.info(f"🗣️ {desc_text}")
+                # Display metrics in a clean row
+                m_cols = st.columns(len(counts))
+                for idx, (cls_id, count) in enumerate(counts.items()):
+                    m_cols[idx].metric(label=class_dict.get(cls_id, 'Unknown'), value=count)
                 
                 # --- THE NEW EXIF GPS FEATURE ---
                 st.markdown("### 🗺️ 3. Geospatial Hazard Mapping")
@@ -123,21 +123,38 @@ with col2:
                 
                 if gps_coords:
                     final_lat, final_lon = gps_coords
-                    st.success(f"📍 GPS Metadata successfully extracted from image: Lat {final_lat:.4f}, Lon {final_lon:.4f}")
+                    st.success(f"📍 GPS Metadata extracted from image: Lat {final_lat:.4f}, Lon {final_lon:.4f}")
                 else:
                     final_lat, final_lon = simulated_lat, simulated_lon
-                    st.warning(f"⚠️ No GPS data found in image file. Using default/simulated coordinates: Lat {final_lat:.4f}, Lon {final_lon:.4f}")
+                    st.warning(f"⚠️ No GPS data found in image. Using simulated coordinates: Lat {final_lat:.4f}, Lon {final_lon:.4f}")
 
-                st.markdown("Deploying automated maintenance dispatch to the following coordinates:")
+                st.caption("Automated Maintenance Dispatch Coordinate Plot:")
                 
-                # Render the map
+                # Render the advanced PyDeck Map
                 map_data = pd.DataFrame({'lat': [final_lat], 'lon': [final_lon]})
-                st.map(map_data, zoom=14, use_container_width=True)
+                
+                view_state = pdk.ViewState(
+                    latitude=final_lat, 
+                    longitude=final_lon, 
+                    zoom=15, 
+                    pitch=45 # Adds a cool 3D tilt
+                )
+                
+                layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_data,
+                    get_position='[lon, lat]',
+                    get_color='[239, 68, 68, 200]', # Red alert color
+                    get_radius=40,
+                    pickable=True
+                )
+                
+                st.pydeck_chart(pdk.Deck(map_style='dark', initial_view_state=view_state, layers=[layer]))
                 
             else:
-                st.success("✅ Scan Complete: No hazards detected. Pavement structure optimal.")
+                st.markdown('<div class="safe-box"><strong>✅ Scan Complete:</strong> No hazards detected. Pavement structure optimal.</div>', unsafe_allow_html=True)
             
     elif not model_loaded:
-        st.error(f"❌ AI model failed to load: {model_error}")
+        st.error("❌ AI Model not found. Please ensure 'best.pt' is in the same directory as this script.")
     else:
         st.info("Awaiting dashcam image upload...")
