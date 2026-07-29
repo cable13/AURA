@@ -23,7 +23,7 @@ st.markdown("""
 @st.cache_resource
 def load_model():
     try:
-        model = YOLO('best.pt')
+        model = YOLO('models/best.pt')
         return model, True
     except Exception as e:
         return None, False
