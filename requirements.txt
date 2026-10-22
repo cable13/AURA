@@ -13,7 +13,7 @@ albumentations
 matplotlib
 kaggle
 huggingface_hub
-```eof
+
 
 **What to do next:**
 1. Commit this new `requirements.txt` to GitHub.
